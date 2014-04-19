@@ -14,7 +14,7 @@
 
 ClassEventsCount = LOAD 'rcv1_train_class_events/part-0*' USING PigStorage() AS (label:chararray, count:long);
 EventsCount = LOAD 'rcv1_train_events/part-0*' USING PigStorage() AS (wl:chararray, count:long);
-
+TestDocs = LOAD 'rcv1_test/small/RCV1.small_test_wids.txt' USING PigStorage() AS (id:int, labels:chararray, text:chararray);
 
 
 --------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ EventsCount = LOAD 'rcv1_train_events/part-0*' USING PigStorage() AS (wl:chararr
 
 
 ----------------------------------------
--- COMPUTE TERM P(Y=y)
+-- 1.1 COMPUTE TERM P(Y=y)
 ----------------------------------------
 
 ----------------------------------------
@@ -49,7 +49,7 @@ LabelLogLikelihood = FOREACH BothDocCounts GENERATE label, LOG((double)label_doc
 
 
 ----------------------------------------
--- COMPUTE TERM #(W=w,Y=y)
+-- 1.2 COMPUTE TERM #(W=*,Y=y)
 ----------------------------------------
 
 
@@ -60,9 +60,42 @@ LabelLogLikelihood = FOREACH BothDocCounts GENERATE label, LOG((double)label_doc
 EventCountSplit = FOREACH EventsCount GENERATE STRSPLIT(wl,'\u002C') AS wl:(word,label), count as count;
 
 ----------------------------------------
+-- compute  #(W=*,Y=y)
+----------------------------------------
+
+EventCountGroup = GROUP EventCountSplit BY wl.label;
+LabelWordCount = FOREACH EventCountGroup GENERATE group as label, SUM(EventCountSplit.count) AS word_count;
+
+
+----------------------------------------
+-- 1.3 SMOOTHING TERM 
+----------------------------------------
+
+----------------------------------------
 -- get vocabulary size for smoothing
 ----------------------------------------
 
+EventCountGroupWord = GROUP EventCountSplit BY wl.word;
+WordList = FOREACH EventCountGroupWord GENERATE group as word;
+WordGroup = GROUP WordList ALL;
+VocabSize = FOREACH WordGroup GENERATE COUNT(WordList) as vocabulary_size;
+
+----------------------------------------
+-- add smoothing to #(W=*,Y=y)
+----------------------------------------
+
+LabelWordCountAndVocabSize = CROSS LabelWordCount, VocabSize;
+LogSmoothedLabelWordCount = FOREACH LabelWordCountAndVocabSize GENERATE label, LOG(word_count + vocabulary_size) AS log_smoothed_word_count;
 
 
+--------------------------------------------------------------------------------
+-- PART 2: TESTING
+--------------------------------------------------------------------------------
+
+----------------------------------------
+-- 2.1 TOKENIZE DOCUMENTS
+----------------------------------------
+
+SplitAllTest = FOREACH TestDocs GENERATE id, TOKENIZE(labels) AS split_labels, TOKENIZE(text) AS split_text;
+TestWordLabel = FOREACH SplitAllTest GENERATE FLATTEN(split_labels) AS label, FLATTEN(split_text) AS word;
 
