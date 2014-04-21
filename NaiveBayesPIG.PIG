@@ -14,7 +14,7 @@
 
 ClassEventsCount = LOAD 'rcv1_train_class_events/part-0*' USING PigStorage() AS (label:chararray, count:long);
 EventsCount = LOAD 'rcv1_train_events/part-0*' USING PigStorage() AS (wl:chararray, count:long);
-TestDocs = LOAD 'rcv1_test/small/RCV1.small_test_wids.txt' USING PigStorage() AS (id:int, labels:chararray, text:chararray);
+TestDocs = LOAD 'rcv1_test/small/RCV1.small_test_wids.txt' USING PigStorage() AS (id:int, true_labels:chararray, text:chararray);
 
 
 --------------------------------------------------------------------------------
@@ -106,6 +106,25 @@ LabelTrainingData = FOREACH LabelTrainingDataJoin GENERATE LogSmoothedLabelWordC
 AllTrainingDataJoin = JOIN LabelTrainingData BY label, EventCount BY label;
 AllTrainingData = FOREACH AllTrainingDataJoin GENERATE word, LabelTrainingData::label AS label, word_label_count, log_smoothed_word_count, label_loglikelihood;
 
+-- STORE AllTrainingData INTO 'training_data/AllTrainingData' using PigStorage('\t');
+-- LOAD 'training_data/AllTrainingData/' USING PigStorage('\t') AS (label:chararray, word_label_count:long, log_smoothed_word_count:double, label_loglikelihood:double);
+
+
+
+
+----------------------------------------
+-- 1.5 AUXILIARY DATA
+----------------------------------------
+----------------------------------------
+-- Compute Label List
+----------------------------------------
+-- LabelsGroup = GROUP EventCount BY label;
+-- LabelsList = FOREACH LabelsGroup GENERATE group AS label;
+----------------------------------------
+-- Add Label Info
+----------------------------------------
+-- LabelWithDataListJoin = JOIN LabelsList BY label, LabelTrainingData BY label;
+-- LabelWithDataList = FOREACH LabelWithDataListJoin GENERATE LabelTrainingData::label AS label
 
 
 
@@ -121,23 +140,61 @@ AllTrainingData = FOREACH AllTrainingDataJoin GENERATE word, LabelTrainingData::
 -- 2.1 TOKENIZE DOCUMENTS
 ----------------------------------------
 
-SplitAllTest = FOREACH TestDocs GENERATE id, TOKENIZE(labels) AS split_labels, TOKENIZE(text) AS split_text;
-TestWordLabel = FOREACH SplitAllTest GENERATE id, FLATTEN(split_labels) AS label, FLATTEN(split_text) AS word;
+SplitAllTest = FOREACH TestDocs GENERATE id, true_labels, TOKENIZE(text) AS split_text;
+TestWordLabel = FOREACH SplitAllTest GENERATE id, true_labels, FLATTEN(split_text) AS word;
 
 
 ----------------------------------------
--- 2.2 COMPUTE LIKELIHOOD
+-- 2.2 GENERATE TEST DATA
 ----------------------------------------
 
 ----------------------------------------
--- get word count on test set
+-- get word count per doc on test set
 ----------------------------------------
 
-TestWordLabelGroup = GROUP TestWordLabel BY (id, label, word);
-TestWordLabelCount = FOREACH TestWordLabelGroup GENERATE FLATTEN(group.id) AS id,FLATTEN(group.label) AS label,FLATTEN(group.word) AS word, COUNT(TestWordLabel) AS word_count;
+TestWordDocLabelGroup = GROUP TestWordLabel BY (id, true_labels, word);
+TestWordDocCount = FOREACH TestWordDocLabelGroup GENERATE FLATTEN(group.id) AS id, group.true_labels AS true_labels,FLATTEN(group.word) AS word, COUNT(TestWordLabel) AS word_count;
 
 ----------------------------------------
--- merge training count with test count
+-- link each (id,word) with each label
 ----------------------------------------
+
+TestWordDocAllLabelsCross = CROSS TestWordDocCount, LabelTrainingData;
+TestWordDocAllLabels = FOREACH TestWordDocAllLabelsCross GENERATE id, true_labels, word, word_count, label, log_smoothed_word_count, label_loglikelihood; 
+
+
+----------------------------------------
+-- 2.3 GET WORD INFO
+----------------------------------------
+
+TestWordInfoJoin = JOIN TestWordDocAllLabels BY (word,label) LEFT OUTER, EventCount BY (word,label);
+TestWordInfo = FOREACH TestWordInfoJoin GENERATE id, TestWordDocAllLabels::TestWordDocCount::word AS word, TestWordDocAllLabels::LabelTrainingData::label AS label, true_labels, word_count AS test_word_count, log_smoothed_word_count, label_loglikelihood, word_label_count AS train_word_count;
+
+----------------------------------------
+-- 2.4 ADD SMOOTHING
+----------------------------------------
+
+SmoothedData = FOREACH TestWordInfo GENERATE id, word, label, true_labels, test_word_count, log_smoothed_word_count, label_loglikelihood, (train_word_count is null ? 1L : ((long)train_word_count+1L)) AS smoothed_train_word_count;
+
+----------------------------------------
+-- 2.5 COMPUTE SCORES
+----------------------------------------
+
+----------------------------------------
+-- word scores
+----------------------------------------
+
+TestScore = FOREACH SmoothedData GENERATE id, word, label, true_labels, (test_word_count*(LOG(smoothed_train_word_count)-log_smoothed_word_count)) AS word_label_loglikelihood, label_loglikelihood;
+
+----------------------------------------
+-- group by label
+----------------------------------------
+TestScoreGroup = GROUP TestScore BY (id,label,true_labels);
+ScoresByDocLabel = FOREACH TestScoreGroup GENERATE group.id AS id, group.label AS label, group.true_labels AS true_labels, SUM(TestScore.word_label_loglikelihood) AS words_label_loglikelihood, MAX(TestScore.label_loglikelihood) AS label_loglikelihood;
+
+
+
+
+
 
 
