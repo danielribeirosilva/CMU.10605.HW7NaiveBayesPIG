@@ -15,8 +15,8 @@
 
 ClassEventsCount = LOAD 'rcv1_train_class_events/part-0*' USING PigStorage() AS (label:chararray, count:long);
 EventsCount = LOAD 'rcv1_train_events/part-0*' USING PigStorage() AS (wl:chararray, count:long);
-TestDocs = LOAD 'rcv1_test/small/RCV1.small_test_wids.txt' USING PigStorage() AS (id:int, true_labels:chararray, text:chararray);
-
+--TestDocs = LOAD 'rcv1_test/small/RCV1.small_test_wids.txt' USING PigStorage() AS (id:int, true_labels:chararray, text:chararray);
+TestDocs = LOAD 'rcv1_test/full/RCV1.full_test_wids.txt' USING PigStorage() AS (id:int, true_labels:chararray, text:chararray);
 
 --------------------------------------------------------------------------------
 -- PART 1: TRAINING
@@ -189,6 +189,11 @@ FinalScores = FOREACH ScoresByDocLabel GENERATE id, label, true_labels, (words_l
 
 FinalScoresSorted = ORDER FinalScores BY likelihood DESC;
 
+----------------------------------------
+-- 2.6 STORE RESULTS
+----------------------------------------
 
+--STORE FinalScoresSorted INTO 'result/small/';
+STORE FinalScoresSorted INTO 'result/full/';
 
 
